@@ -17,7 +17,7 @@ CameraRoll.requestLocalPhotos(minEpoch)
 ```javascript
 import { eventEmitter as Events, ILocalPhotoResult } from '@textile/react-native-camera-roll'
 
-Events.addListener('newLocalPhoto', (localPhoto: ILocalPhotoResult) => {
+Events.addListener('@textile/newLocalPhoto', (localPhoto: ILocalPhotoResult) => {
 	// Do something
 })
 ```
