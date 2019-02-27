@@ -100,6 +100,8 @@ RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBl
         }
       }];
 
+      dispatch_group_wait(assetDatasGroup, DISPATCH_TIME_FOREVER);
+
       // assetDatas fully populated now
       [assetDatas sortUsingSelector:@selector(compare:)];
 
@@ -121,24 +123,26 @@ RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBl
   PHImageRequestOptions *requestOptions = [[PHImageRequestOptions alloc] init];
 //  requestOptions.synchronous = @TRUE;
   [[PHImageManager defaultManager] requestImageDataForAsset:asset options:requestOptions resultHandler:^(NSData * _Nullable imageData, NSString * _Nullable dataUTI, UIImageOrientation imageOrientation, NSDictionary * _Nullable info) {
-    // Got the image data for copying
-    if (imageData) {
-      UIImage *image = [UIImage imageWithData:imageData];
-      NSData *jpegData = UIImageJPEGRepresentation(image, 1.0);
-      NSString *jpgFilename = [NSString stringWithFormat:@"%@.%@", [orgFilename stringByDeletingPathExtension], @"jpg"];
-      // Get our path in the tmp directory
-      NSString *path = [[NSTemporaryDirectory() stringByStandardizingPath] stringByAppendingPathComponent:jpgFilename];
+    dispatch_async(self.methodQueue, ^{
+      // Got the image data for copying
+      if (imageData) {
+        UIImage *image = [UIImage imageWithData:imageData];
+        NSData *jpegData = UIImageJPEGRepresentation(image, 1.0);
+        NSString *jpgFilename = [NSString stringWithFormat:@"%@.%@", [orgFilename stringByDeletingPathExtension], @"jpg"];
+        // Get our path in the tmp directory
+        NSString *path = [[NSTemporaryDirectory() stringByStandardizingPath] stringByAppendingPathComponent:jpgFilename];
 
-      // Write the data to the temp file
-      BOOL success = [jpegData writeToFile:path atomically:YES];
-      if (success) {
-        onComplete(path, imageOrientation);
+        // Write the data to the temp file
+        BOOL success = [jpegData writeToFile:path atomically:YES];
+        if (success) {
+          onComplete(path, imageOrientation);
+        } else {
+          onComplete(nil, imageOrientation);
+        }
       } else {
         onComplete(nil, imageOrientation);
       }
-    } else {
-      onComplete(nil, imageOrientation);
-    }
+    });
   }];
 }
 
