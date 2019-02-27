@@ -1,5 +1,4 @@
 #import "RNCameraRoll.h"
-#import "RNCameraRollEvents.h"
 #import <Photos/Photos.h>
 
 // import RCTBridge

@@ -19,7 +19,7 @@ public class RNCameraRollPackage implements ReactPackage {
         // https://facebook.github.io/react-native/docs/native-modules-android.html#register-the-module
         List<NativeModule> modules = new ArrayList<>();
 
-        modules.add(new RNCameraRollModule(reactContext));
+        modules.add(new RNCameraRoll(reactContext));
 
         return modules;
     }
