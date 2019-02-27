@@ -10,6 +10,7 @@ import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
 import java.util.ArrayList;
@@ -72,7 +73,7 @@ public class RNCameraRoll extends ReactContextBaseJavaModule {
                     final int createdColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED);
                     final int orientationColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.ORIENTATION);
 
-                    ArrayList<WritableMap> results = new ArrayList(cursor.getCount());
+                    WritableArray results = Arguments.createArray();
                     do {
                         // Send a new event, newLocalPhoto
                         try {
@@ -90,7 +91,7 @@ public class RNCameraRoll extends ReactContextBaseJavaModule {
                             payload.putInt("orientation", Integer.parseInt(orientation));
                             payload.putBoolean("canDelete", false);
 
-                            results.add(payload);
+                            results.pushMap(payload);
                         } catch (Exception e) {
                             promise.reject("0", e.getMessage());
                         }
