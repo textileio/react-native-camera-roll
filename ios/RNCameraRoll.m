@@ -109,14 +109,7 @@ RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBl
         [results addObject:[self _convertAssetData:assetData]];
       }];
 
-      NSError *serializationError;
-      NSData *data = [NSJSONSerialization dataWithJSONObject:results options:NSJSONWritingPrettyPrinted error:&serializationError];
-      if(serializationError) {
-        reject(@"0", serializationError.localizedFailureReason, serializationError);
-      } else {
-        NSString* jsonStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        resolve(jsonStr);
-      }
+      resolve(results);
     }
   } else {
     reject(@"1", @"no photos permission", [[NSError alloc] initWithDomain:@"io.textile" code:1 userInfo:nil]);
