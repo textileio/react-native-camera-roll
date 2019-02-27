@@ -11,14 +11,36 @@
 #import “React/RCTBridge.h” // Required when used as a Pod in a Swift project
 #endif
 
+@interface AssetData : NSObject
+
+@property PHAsset *asset;
+@property NSString *path;
+@property UIImageOrientation orientation;
+
+- (NSComparisonResult)compare:(AssetData *)otherObject;
+
+@end
+
+@implementation AssetData
+
+- (NSComparisonResult)compare:(AssetData *)otherObject {
+  NSDate *selfDate = [self.asset valueForKey:@"modificationDate"];
+  NSDate *otherDate = [otherObject.asset valueForKey:@"modificationDate"];
+  return [selfDate compare:otherDate];
+}
+@end
+
 @implementation RNCameraRoll
 
 RCT_EXPORT_MODULE();
 
+- (dispatch_queue_t)methodQueue {
+  return dispatch_queue_create("io.textile.CameraRollQueue", DISPATCH_QUEUE_SERIAL);
+}
+
 RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
   NSTimeInterval seconds = minEpoch;
   NSDate *epochNSDate = [[NSDate alloc] initWithTimeIntervalSince1970:seconds];
-
   PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
   if (status == PHAuthorizationStatusAuthorized)
   {
@@ -40,15 +62,18 @@ RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBl
       onlyImagesOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"modificationDate" ascending:YES]];
 
       PHFetchResult *allPhotosResult = [PHAsset fetchAssetsWithMediaType:PHAssetMediaTypeImage options:onlyImagesOptions];
+
+      NSMutableArray<AssetData*> *assetDatas = [[NSMutableArray alloc] init];
+
+      dispatch_group_t assetDatasGroup = dispatch_group_create();
+
       [allPhotosResult enumerateObjectsUsingBlock:^(PHAsset *asset, NSUInteger idx, BOOL *stop) {
 
         // Get the original filename to keep it straight on the system.
         // Alternatively could probably just use timestamp, but this doesn't seem to have any lag
         NSArray *resources = [PHAssetResource assetResourcesForAsset:asset];
 
-
         NSString *orgFilename = ((PHAssetResource*)resources[0]).originalFilename;
-        NSString *extension = [orgFilename pathExtension];
 
         // Check that this isn't a metadata edit only. adjustmentTimestamp should be pixel changes
         NSDate *adjDate = [asset valueForKey:@"adjustmentTimestamp"];
@@ -60,63 +85,64 @@ RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBl
         } else if (adjDate == nil && [epochNSDate timeIntervalSinceDate:creDate] > 0) {
           // if creation timestamp is less than our filter and the image has never been modified, return
           return;
-        } else if ( [extension caseInsensitiveCompare:@"heic"] == NSOrderedSame ) {
-          [self _processHEIC:asset orgFilename:orgFilename];
         } else {
-          [self _processJPG:asset orgFilename:orgFilename];
+          dispatch_group_enter(assetDatasGroup);
+          [self _writeToDisk:asset orgFilename:orgFilename onComplete:^(NSString *path, UIImageOrientation orientation) {
+            if (path) {
+              AssetData *data = [[AssetData alloc] init];
+              data.asset = asset;
+              data.path = path;
+              data.orientation = orientation;
+              [assetDatas addObject:data];
+            }
+            dispatch_group_leave(assetDatasGroup);
+          }];
         }
       }];
+
+      // assetDatas fully populated now
+      [assetDatas sortUsingSelector:@selector(compare:)];
+
+      NSMutableArray<NSDictionary*> *results = [[NSMutableArray alloc] initWithCapacity:assetDatas.count];
+
+      [assetDatas enumerateObjectsUsingBlock:^(AssetData *assetData, NSUInteger idx, BOOL *stop) {
+        [results addObject:[self _convertAssetData:assetData]];
+      }];
+
+      resolve(results);
     }
+  } else {
+    reject(@"1", @"no photos permission", [[NSError alloc] initWithDomain:@"io.textile" code:1 userInfo:nil]);
   }
-  resolve(@YES);
 }
 
-- (void)_processJPG:(PHAsset *)asset orgFilename:(NSString *)orgFilename  {
+- (void)_writeToDisk:(PHAsset *)asset orgFilename:(NSString *)orgFilename onComplete:(void (^_Nonnull)(NSString*, UIImageOrientation))onComplete  {
   // If the file isn't a HEIC, just write it to temp and move along.
-  [[PHImageManager defaultManager] requestImageDataForAsset:asset options:nil resultHandler:^(NSData * _Nullable imageData, NSString * _Nullable dataUTI, UIImageOrientation imageOrientation, NSDictionary * _Nullable info) {
+  PHImageRequestOptions *requestOptions = [[PHImageRequestOptions alloc] init];
+//  requestOptions.synchronous = @TRUE;
+  [[PHImageManager defaultManager] requestImageDataForAsset:asset options:requestOptions resultHandler:^(NSData * _Nullable imageData, NSString * _Nullable dataUTI, UIImageOrientation imageOrientation, NSDictionary * _Nullable info) {
     // Got the image data for copying
     if (imageData) {
+      UIImage *image = [UIImage imageWithData:imageData];
+      NSData *jpegData = UIImageJPEGRepresentation(image, 1.0);
+      NSString *jpgFilename = [NSString stringWithFormat:@"%@.%@", [orgFilename stringByDeletingPathExtension], @"jpg"];
       // Get our path in the tmp directory
-      NSString *path = [[NSTemporaryDirectory()stringByStandardizingPath] stringByAppendingPathComponent:orgFilename];
+      NSString *path = [[NSTemporaryDirectory() stringByStandardizingPath] stringByAppendingPathComponent:jpgFilename];
 
       // Write the data to the temp file
-      BOOL success = [imageData writeToFile:path atomically:YES];
+      BOOL success = [jpegData writeToFile:path atomically:YES];
       if (success) {
-        [self _processImage:asset imageOrientation:imageOrientation path:path ];
+        onComplete(path, imageOrientation);
+      } else {
+        onComplete(nil, imageOrientation);
       }
+    } else {
+      onComplete(nil, imageOrientation);
     }
   }];
 }
 
-- (void)_processHEIC:(PHAsset *)asset orgFilename:(NSString *)orgFilename {
-  // If the file is HEIC, first we need to get the real UIImage, then conver to JPG
-  PHImageRequestOptions *requestOptions = [[PHImageRequestOptions alloc] init];
-  requestOptions.resizeMode   = PHImageRequestOptionsResizeModeExact;
-  requestOptions.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
-  // Optional way later to get rid of the Event based returns with RN
-  // requestOptions.synchronous = @TRUE;
-  // Make the request for the UIImage
-  [[PHImageManager defaultManager] requestImageForAsset:asset
-                                             targetSize:PHImageManagerMaximumSize
-                                            contentMode:PHImageContentModeDefault
-                                                options:requestOptions
-                                          resultHandler:^void(UIImage *image, NSDictionary *info) {
-                                            // Force the HEIC to JPEG, no loss
-                                            NSData *jpegData = UIImageJPEGRepresentation(image, 1.0);
-                                            NSString *jpgFilename = [NSString stringWithFormat:@"%@.%@", [orgFilename stringByDeletingPathExtension], @"jpg"];
-
-                                            // Get our path in the tmp directory
-                                            NSString *path = [[NSTemporaryDirectory()stringByStandardizingPath] stringByAppendingPathComponent:jpgFilename];
-
-                                            // Write the data to the temp file
-                                            BOOL success = [jpegData writeToFile:path atomically:YES];
-                                            if (success) {
-                                              [self _processImage:asset imageOrientation:1 path:path ];
-                                            }
-                                          }];
-}
-
-- (void)_processImage:(PHAsset *)asset imageOrientation:(NSInteger)imageOrientation path:(NSString *)path {
+- (NSDictionary*)_convertAssetData:(AssetData *)assetData {
   // Setup date-string conversion
   NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
   // Ensure date string is always in UTC
@@ -124,22 +150,24 @@ RCT_EXPORT_METHOD(requestLocalPhotos:(int)minEpoch resolver:(RCTPromiseResolveBl
   [dateFormatter setDateFormat:@"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"];
 
   // creationDate is also available, but seems to be pure exif date
-  NSDate *newDate = asset.modificationDate;
-  NSDate *creationDate = asset.creationDate;
+  NSDate *newDate = assetData.asset.modificationDate;
+  NSDate *creationDate = assetData.asset.creationDate;
   // dataWithJSONObject cannot include NSDate
   NSString *dateString = [dateFormatter stringFromDate:newDate];
   NSString *creationDateString = [dateFormatter stringFromDate:creationDate];
   // get an int
-  NSNumber *orientation = imageOrientation ? [NSNumber numberWithInteger:imageOrientation] : [NSNumber numberWithInt:1];
+  NSNumber *orientation = assetData.orientation ? [NSNumber numberWithInteger:assetData.orientation] : [NSNumber numberWithInt:1];
 
-  NSDictionary *payload = @{ @"uri": path, @"path": path, @"modificationDate": dateString, @"creationDate": creationDateString, @"assetId": asset.localIdentifier, @"orientation": orientation, @"canDelete": @true};
-  NSError *serializationError;
-  NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingPrettyPrinted error:&serializationError];
-  if(!serializationError) {
-    NSString* jsonStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    // Send our event back to RN
-    [CameraRollEvents emitEventWithName:@"@textile/newLocalPhoto" andPayload:jsonStr];
-  }
+  NSDictionary *payload = @{
+                            @"uri": assetData.path,
+                            @"path": assetData.path,
+                            @"modificationDate": dateString,
+                            @"creationDate": creationDateString,
+                            @"assetId": assetData.asset.localIdentifier,
+                            @"orientation": orientation,
+                            @"canDelete": @true
+                            };
+  return payload;
 }
 
 @end
