@@ -13,7 +13,6 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
-import java.util.ArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
@@ -98,7 +97,7 @@ public class RNCameraRoll extends ReactContextBaseJavaModule {
                     } while (cursor.moveToNext());
                     promise.resolve(results);
                 } else {
-                    promise.resolve(new ArrayList());
+                    promise.resolve(Arguments.createArray());
                 }
                 cursor.close();
             }
